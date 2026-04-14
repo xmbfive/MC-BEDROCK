@@ -1,7 +1,7 @@
 {
   "name": "bedrock-afk-bot",
   "version": "1.0.0",
-  "description": "Bedrock AFK Bot - No Auth Required",
+  "description": "Bedrock AFK Bot for 1.21.3",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
