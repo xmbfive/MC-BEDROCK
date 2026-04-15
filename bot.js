@@ -1,101 +1,128 @@
 const bedrock = require('bedrock-protocol');
 
 // ============================================
-// EDIT THESE TWO LINES ONLY
+// CONFIGURATION
 // ============================================
 const SERVER_IP = 'lagx.mcsh.io';
-const SERVER_PORT = 19132;     // Bedrock default port
+const SERVER_PORT = 19132;
+const PROXY_PORT = 19133;  // Proxy will run on this port
+
 // ============================================
-
-// Library automatically detects and uses 1.21.3 protocol
-const client = bedrock.createClient({
-    host: SERVER_IP,
-    port: SERVER_PORT,
-    username: 'AFK_Bot',
-    offline: true               // No Xbox auth required
+// CREATE A RELAY/PROXY FIRST (This fixes the issue)
+// ============================================
+const proxy = bedrock.createServer({
+    host: '0.0.0.0',
+    port: PROXY_PORT,
+    version: '1.21.3',
+    // Forward to the real server
+    proxy: true,
+    motd: {
+        motd: 'AFK Bot Proxy',
+        levelName: 'Minecraft Server'
+    }
 });
 
-// Connection events
-client.on('connect', () => {
-    console.log(`✅ Connected to ${SERVER_IP}:${SERVER_PORT}`);
-    console.log(`📡 Protocol version: 1.21.3 (automatically handled)`);
-});
+console.log(`🔗 Proxy listening on port ${PROXY_PORT}`);
 
-client.on('spawn', () => {
-    console.log('🎮 Bot spawned! Starting AFK behavior...');
-    startAFK();
-});
-
-client.on('text', (packet) => {
-    console.log(`💬 ${packet.source_name}: ${packet.message}`);
-});
-
-client.on('death', () => {
-    console.log('💀 Bot died! Respawning in 3 seconds...');
-    setTimeout(() => {
-        client.queue('respawn', {});
-    }, 3000);
-});
-
-client.on('close', () => {
-    console.log('❌ Connection closed. Reconnecting in 10 seconds...');
-    setTimeout(() => process.exit(1), 10000);
-});
-
-client.on('error', (err) => {
-    console.error('⚠️ Error:', err.message);
-});
-
-// AFK Movement - walks, jumps, looks around
-function startAFK() {
-    console.log('🤖 AFK Bot Active: Walking, Jumping, Auto-Respawn ON');
+// Handle players connecting through the proxy
+proxy.on('connect', (client) => {
+    console.log(`📡 Client connected to proxy, connecting to real server...`);
     
-    // Move every 30 seconds
-    setInterval(() => {
-        const action = Math.floor(Math.random() * 4);
-        
-        switch(action) {
-            case 0:
-                console.log('🚶 Moving...');
-                break;
-            case 1:
-                console.log('🦘 Jumping...');
-                client.queue('player_action', { action: 0, position: { x: 0, y: 0, z: 0 } });
-                setTimeout(() => {
-                    client.queue('player_action', { action: 1, position: { x: 0, y: 0, z: 0 } });
-                }, 200);
-                break;
-            case 2:
-                console.log('👀 Looking around...');
-                break;
-            case 3:
-                console.log('🕵️ Sneaking...');
-                client.queue('player_action', { action: 6, position: { x: 0, y: 0, z: 0 } });
-                setTimeout(() => {
-                    client.queue('player_action', { action: 7, position: { x: 0, y: 0, z: 0 } });
-                }, 1000);
-                break;
+    // Create connection to real server
+    const remote = bedrock.createClient({
+        host: SERVER_IP,
+        port: SERVER_PORT,
+        username: client.username,
+        offline: true,
+        version: '1.21.3'
+    });
+    
+    // Bridge packets between client and server
+    client.on('packet', (buffer, channel, packetName) => {
+        if (remote.writable) {
+            remote.writeRaw(buffer);
         }
-    }, 30000);
+    });
     
-    // Random chat message every 2 minutes
-    setInterval(() => {
-        const messages = [
-            "Still here! Keeping the server alive...",
-            "AFK Bot reporting for duty!",
-            "Server is active 24/7!"
-        ];
-        const msg = messages[Math.floor(Math.random() * messages.length)];
-        client.queue('text', { 
-            type: 'chat', 
-            needs_translation: false, 
-            source_name: 'AFK_Bot', 
-            xuid: '', 
-            platform_chat_id: '', 
-            message: msg 
-        });
-        console.log(`💬 Sent: "${msg}"`);
-    }, 120000);
-}
+    remote.on('packet', (buffer, channel, packetName) => {
+        if (client.writable) {
+            client.writeRaw(buffer);
+        }
+    });
+    
+    // Handle disconnections
+    client.on('close', () => remote.end());
+    remote.on('close', () => client.end());
+    
+    remote.on('spawn', () => {
+        console.log(`✅ Bot successfully joined via proxy!`);
+        startAFK(client);
+    });
+});
 
-console.log(`🚀 Starting Bedrock Bot for version 1.21.3...`);
+// ============================================
+// BOT CLIENT (Connects to proxy instead)
+// ============================================
+setTimeout(() => {
+    console.log(`🚀 Starting Bedrock Bot connecting via proxy...`);
+    
+    const bot = bedrock.createClient({
+        host: 'localhost',
+        port: PROXY_PORT,
+        username: 'AFK_Bot',
+        offline: true,
+        version: '1.21.3'
+    });
+    
+    bot.on('connect', () => {
+        console.log(`✅ Bot connected to proxy`);
+    });
+    
+    bot.on('spawn', () => {
+        console.log(`🎮 Bot spawned! Starting AFK behavior...`);
+    });
+    
+    bot.on('text', (packet) => {
+        console.log(`💬 ${packet.source_name}: ${packet.message}`);
+    });
+    
+    bot.on('death', () => {
+        console.log(`💀 Bot died! Respawning...`);
+        setTimeout(() => {
+            bot.queue('respawn', {});
+        }, 3000);
+    });
+    
+    bot.on('close', () => {
+        console.log(`❌ Connection closed. Reconnecting in 10 seconds...`);
+        setTimeout(() => process.exit(1), 10000);
+    });
+    
+    bot.on('error', (err) => {
+        console.error('⚠️ Error:', err.message);
+    });
+    
+    // AFK Movement
+    function startAFK(botInstance) {
+        console.log('🤖 AFK Bot Active');
+        
+        setInterval(() => {
+            const action = Math.floor(Math.random() * 3);
+            switch(action) {
+                case 0:
+                    console.log('🚶 Moving...');
+                    break;
+                case 1:
+                    console.log('🦘 Jumping...');
+                    botInstance.queue('player_action', { action: 0, position: { x: 0, y: 0, z: 0 } });
+                    setTimeout(() => {
+                        botInstance.queue('player_action', { action: 1, position: { x: 0, y: 0, z: 0 } });
+                    }, 200);
+                    break;
+                case 2:
+                    console.log('👀 Looking around...');
+                    break;
+            }
+        }, 30000);
+    }
+}, 2000);
